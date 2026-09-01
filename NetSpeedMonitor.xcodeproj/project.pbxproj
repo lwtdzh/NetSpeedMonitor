@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		16EBB1B84F58E9FF3F51FD81 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F4487F98A08F233A3DA31296 /* IOKit.framework */; };
 		1835E6423DE2FF405702B108 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE5EA4F52A1B271407BCBEF5 /* AppSettings.swift */; };
 		492CD4EE68BAF86FDDF29FF0 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 421980DE109DB3188D04A8A5 /* main.swift */; };
 		6DA6104C70509DC18869A8BF /* NetSpeedMonitorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B627429D000552D955F06D70 /* NetSpeedMonitorApp.swift */; };
@@ -39,7 +40,19 @@
 		BE5EA4F52A1B271407BCBEF5 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		BF577F9D3CDE4B440EF0D766 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		E945931D509F0EC52EF8ED79 /* NetSpeedMonitor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NetSpeedMonitor.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F4487F98A08F233A3DA31296 /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A209013CD43D77D51104CE98 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				16EBB1B84F58E9FF3F51FD81 /* IOKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		74FDFFD1BE75E4F00F2C0938 = {
@@ -47,6 +60,7 @@
 			children = (
 				AA9B511970A05D5797BC37D1 /* NetSpeedHelper */,
 				FC80599EE09FA517BB45E6AE /* NetSpeedMonitor */,
+				F151158A5924DC2424DB463E /* Frameworks */,
 				D22439D7ECA618C57520EFF8 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -67,6 +81,14 @@
 				E945931D509F0EC52EF8ED79 /* NetSpeedMonitor.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		F151158A5924DC2424DB463E /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				F4487F98A08F233A3DA31296 /* IOKit.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 		FC80599EE09FA517BB45E6AE /* NetSpeedMonitor */ = {
@@ -112,6 +134,7 @@
 			buildConfigurationList = 0060DD9B3282B6A18B74E7CF /* Build configuration list for PBXNativeTarget "NetSpeedHelper" */;
 			buildPhases = (
 				9C6300534CB9AB8C1518C851 /* Sources */,
+				A209013CD43D77D51104CE98 /* Frameworks */,
 			);
 			buildRules = (
 			);

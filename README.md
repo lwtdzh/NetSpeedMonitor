@@ -1,11 +1,12 @@
 # Net Speed Monitor
 
-A lightweight macOS utility that displays real-time download and upload speeds
-in the menu bar and an optional always-on-top floating panel.
+A lightweight macOS utility that displays real-time network and disk speeds in
+the menu bar and an optional always-on-top floating panel.
 
 ## Features
 
-- Vertical download and upload indicators in the menu bar
+- Download, upload, disk-read, and disk-write indicators
+- Independently selectable rates, with at least one always visible
 - Borderless, resizable, always-on-top floating panel
 - Bits/s and Bytes/s display modes
 - Configurable refresh intervals: 1, 2, 3, 5, or 10 seconds
@@ -64,6 +65,6 @@ opens Settings.
 ## How It Works
 
 The app bundles a universal `net-speed-all` helper. The helper reads per-flow
-traffic data from macOS `nettop`, aggregates it by network interface, and
-streams newline-delimited JSON samples to the app. All processing remains
-local to the Mac.
+traffic data from macOS `nettop`, aggregates it by network interface, and reads
+disk byte counters through IOKit. It streams newline-delimited JSON samples to
+the app. All processing remains local to the Mac.

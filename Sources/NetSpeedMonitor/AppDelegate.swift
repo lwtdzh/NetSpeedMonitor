@@ -29,9 +29,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         monitor.$downloadBytesPerSecond
-            .combineLatest(monitor.$uploadBytesPerSecond)
+            .combineLatest(
+                monitor.$uploadBytesPerSecond,
+                monitor.$diskReadBytesPerSecond,
+                monitor.$diskWriteBytesPerSecond
+            )
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _, _ in
+            .sink { [weak self] _, _, _, _ in
                 self?.updateStatusItem()
             }
             .store(in: &cancellables)
@@ -65,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.cell?.usesSingleLineMode = false
             button.cell?.wraps = false
             button.alignment = .left
-            button.toolTip = "Net Speed Monitor"
+            button.toolTip = "Network and Disk Speed Monitor"
         }
 
         let menu = NSMenu()
@@ -102,29 +106,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateStatusItem() {
-        let lines = monitor.menuBarLines(unit: settings.dataRateUnit)
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .semibold)
+        let columns = monitor.menuBarColumns(unit: settings.dataRateUnit, settings: settings)
+        let font = NSFont.monospacedSystemFont(ofSize: 8.5, weight: .semibold)
+        let diskWidth = columns.disk
+            .map { ($0 as NSString).size(withAttributes: [.font: font]).width }
+            .max() ?? 0
+        let networkWidth = columns.network
+            .map { ($0 as NSString).size(withAttributes: [.font: font]).width }
+            .max() ?? 0
+        let hasTwoColumns = !columns.disk.isEmpty && !columns.network.isEmpty
+        let columnGap: CGFloat = hasTwoColumns ? 8 : 0
+        let rowCount = max(columns.disk.count, columns.network.count)
+        let lines = (0..<rowCount).map { row in
+            let disk = row < columns.disk.count ? columns.disk[row] : ""
+            let network = row < columns.network.count ? columns.network[row] : ""
+            if hasTwoColumns {
+                return "\(disk)\t\(network)"
+            }
+            return disk.isEmpty ? network : disk
+        }
+
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .left
         paragraph.minimumLineHeight = 9
         paragraph.maximumLineHeight = 9
+        if hasTwoColumns {
+            paragraph.tabStops = [
+                NSTextTab(
+                    textAlignment: .left,
+                    location: ceil(diskWidth) + columnGap,
+                    options: [:]
+                )
+            ]
+        }
 
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: NSColor.controlTextColor,
             .paragraphStyle: paragraph,
-            .baselineOffset: -3.7
+            .baselineOffset: -4.2
         ]
 
-        statusItem?.button?.attributedTitle = NSAttributedString(
+        let title = NSMutableAttributedString(
             string: lines.joined(separator: "\n"),
             attributes: attributes
         )
+        let titleText = title.string as NSString
+        for (prefix, color) in [("W ", NSColor.systemRed), ("R ", NSColor.systemBlue)] {
+            let range = titleText.range(of: prefix)
+            if range.location != NSNotFound {
+                title.addAttribute(
+                    .foregroundColor,
+                    value: color,
+                    range: NSRange(location: range.location, length: 1)
+                )
+            }
+        }
+        statusItem?.button?.attributedTitle = title
 
-        let longestLine = lines
-            .map { ($0 as NSString).size(withAttributes: [.font: font]).width }
-            .max() ?? 0
-        statusItem?.length = max(28, ceil(longestLine) + 1)
+        let contentWidth = diskWidth + columnGap + networkWidth
+        statusItem?.length = max(28, ceil(contentWidth) + 1)
 
         if
             let item = statusItem?.menu?.items.first(

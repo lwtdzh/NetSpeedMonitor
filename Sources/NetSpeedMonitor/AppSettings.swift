@@ -22,6 +22,10 @@ final class AppSettings: ObservableObject {
     private enum Key {
         static let showMenuBar = "showMenuBar"
         static let showFloatingPanel = "showFloatingPanel"
+        static let showDownload = "showDownload"
+        static let showUpload = "showUpload"
+        static let showDiskRead = "showDiskRead"
+        static let showDiskWrite = "showDiskWrite"
         static let dataRateUnit = "dataRateUnit"
         static let refreshInterval = "refreshInterval"
     }
@@ -29,6 +33,10 @@ final class AppSettings: ObservableObject {
     @Published private(set) var launchAtLogin: Bool
     @Published private(set) var showMenuBar: Bool
     @Published private(set) var showFloatingPanel: Bool
+    @Published private(set) var showDownload: Bool
+    @Published private(set) var showUpload: Bool
+    @Published private(set) var showDiskRead: Bool
+    @Published private(set) var showDiskWrite: Bool
     @Published private(set) var dataRateUnit: DataRateUnit
     @Published private(set) var refreshInterval: Int
     @Published var errorMessage: String?
@@ -40,6 +48,10 @@ final class AppSettings: ObservableObject {
         launchAtLogin = SMAppService.mainApp.status == .enabled
         showMenuBar = defaults.object(forKey: Key.showMenuBar) as? Bool ?? true
         showFloatingPanel = defaults.object(forKey: Key.showFloatingPanel) as? Bool ?? true
+        showDownload = defaults.object(forKey: Key.showDownload) as? Bool ?? true
+        showUpload = defaults.object(forKey: Key.showUpload) as? Bool ?? true
+        showDiskRead = defaults.object(forKey: Key.showDiskRead) as? Bool ?? true
+        showDiskWrite = defaults.object(forKey: Key.showDiskWrite) as? Bool ?? true
         dataRateUnit = DataRateUnit(
             rawValue: defaults.string(forKey: Key.dataRateUnit) ?? ""
         ) ?? .bits
@@ -50,6 +62,9 @@ final class AppSettings: ObservableObject {
 
         if !showMenuBar && !showFloatingPanel {
             showMenuBar = true
+        }
+        if !showDownload && !showUpload && !showDiskRead && !showDiskWrite {
+            showDownload = true
         }
     }
 
@@ -84,6 +99,30 @@ final class AppSettings: ObservableObject {
         savePresentation()
     }
 
+    func setShowDownload(_ enabled: Bool) {
+        guard enabled || showUpload || showDiskRead || showDiskWrite else { return }
+        showDownload = enabled
+        saveMetricVisibility()
+    }
+
+    func setShowUpload(_ enabled: Bool) {
+        guard enabled || showDownload || showDiskRead || showDiskWrite else { return }
+        showUpload = enabled
+        saveMetricVisibility()
+    }
+
+    func setShowDiskRead(_ enabled: Bool) {
+        guard enabled || showDownload || showUpload || showDiskWrite else { return }
+        showDiskRead = enabled
+        saveMetricVisibility()
+    }
+
+    func setShowDiskWrite(_ enabled: Bool) {
+        guard enabled || showDownload || showUpload || showDiskRead else { return }
+        showDiskWrite = enabled
+        saveMetricVisibility()
+    }
+
     func setDataRateUnit(_ unit: DataRateUnit) {
         dataRateUnit = unit
         UserDefaults.standard.set(unit.rawValue, forKey: Key.dataRateUnit)
@@ -100,6 +139,14 @@ final class AppSettings: ObservableObject {
     private func savePresentation() {
         UserDefaults.standard.set(showMenuBar, forKey: Key.showMenuBar)
         UserDefaults.standard.set(showFloatingPanel, forKey: Key.showFloatingPanel)
+        onPresentationChanged?()
+    }
+
+    private func saveMetricVisibility() {
+        UserDefaults.standard.set(showDownload, forKey: Key.showDownload)
+        UserDefaults.standard.set(showUpload, forKey: Key.showUpload)
+        UserDefaults.standard.set(showDiskRead, forKey: Key.showDiskRead)
+        UserDefaults.standard.set(showDiskWrite, forKey: Key.showDiskWrite)
         onPresentationChanged?()
     }
 }

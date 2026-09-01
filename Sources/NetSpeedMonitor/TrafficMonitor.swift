@@ -10,6 +10,8 @@ struct InterfaceTraffic: Decodable {
 struct TrafficSample: Decodable {
     let downloadBytesPerSecond: UInt64
     let uploadBytesPerSecond: UInt64
+    let diskReadBytesPerSecond: UInt64
+    let diskWriteBytesPerSecond: UInt64
     let interfaces: [String: InterfaceTraffic]
 }
 
@@ -22,9 +24,16 @@ struct FormattedRate {
     }
 }
 
+struct MenuBarColumns {
+    let disk: [String]
+    let network: [String]
+}
+
 final class TrafficMonitor: ObservableObject {
     @Published private(set) var downloadBytesPerSecond: UInt64 = 0
     @Published private(set) var uploadBytesPerSecond: UInt64 = 0
+    @Published private(set) var diskReadBytesPerSecond: UInt64 = 0
+    @Published private(set) var diskWriteBytesPerSecond: UInt64 = 0
     @Published private(set) var interfaces: [String: InterfaceTraffic] = [:]
     @Published private(set) var errorMessage: String?
 
@@ -35,14 +44,23 @@ final class TrafficMonitor: ObservableObject {
     private var shouldRun = false
     private var refreshInterval = 1
 
-    func menuBarText(unit: DataRateUnit) -> String {
-        menuBarLines(unit: unit).joined(separator: "\n")
-    }
+    func menuBarColumns(unit: DataRateUnit, settings: AppSettings) -> MenuBarColumns {
+        var diskLines: [String] = []
+        var networkLines: [String] = []
 
-    func menuBarLines(unit: DataRateUnit) -> [String] {
-        let download = Self.formattedRate(downloadBytesPerSecond, unit: unit)
-        let upload = Self.formattedRate(uploadBytesPerSecond, unit: unit)
-        return ["↓\(download.compact)", "↑\(upload.compact)"]
+        if settings.showDiskWrite {
+            diskLines.append("W \(Self.formattedRate(diskWriteBytesPerSecond, unit: unit).compact)")
+        }
+        if settings.showDiskRead {
+            diskLines.append("R \(Self.formattedRate(diskReadBytesPerSecond, unit: unit).compact)")
+        }
+        if settings.showDownload {
+            networkLines.append("↓\(Self.formattedRate(downloadBytesPerSecond, unit: unit).compact)")
+        }
+        if settings.showUpload {
+            networkLines.append("↑\(Self.formattedRate(uploadBytesPerSecond, unit: unit).compact)")
+        }
+        return MenuBarColumns(disk: diskLines, network: networkLines)
     }
 
     func start(refreshInterval: Int = 1) {
@@ -140,6 +158,8 @@ final class TrafficMonitor: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 self?.downloadBytesPerSecond = sample.downloadBytesPerSecond
                 self?.uploadBytesPerSecond = sample.uploadBytesPerSecond
+                self?.diskReadBytesPerSecond = sample.diskReadBytesPerSecond
+                self?.diskWriteBytesPerSecond = sample.diskWriteBytesPerSecond
                 self?.interfaces = sample.interfaces
                 self?.errorMessage = nil
             }

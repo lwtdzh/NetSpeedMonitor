@@ -1,9 +1,46 @@
 import Darwin
 import Foundation
+import IOKit
 
 struct Counters {
     var download: UInt64 = 0
     var upload: UInt64 = 0
+}
+
+struct DiskCounters {
+    var read: UInt64 = 0
+    var write: UInt64 = 0
+}
+
+func diskCounters() -> DiskCounters {
+    var iterator: io_iterator_t = 0
+    guard
+        let matching = IOServiceMatching("IOBlockStorageDriver"),
+        IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == KERN_SUCCESS
+    else {
+        return DiskCounters()
+    }
+    defer { IOObjectRelease(iterator) }
+
+    var counters = DiskCounters()
+    var service = IOIteratorNext(iterator)
+    while service != 0 {
+        if
+            let value = IORegistryEntryCreateCFProperty(
+                service,
+                "Statistics" as CFString,
+                kCFAllocatorDefault,
+                0
+            )?.takeRetainedValue(),
+            let statistics = value as? [String: Any]
+        {
+            counters.read += (statistics["Bytes (Read)"] as? NSNumber)?.uint64Value ?? 0
+            counters.write += (statistics["Bytes (Write)"] as? NSNumber)?.uint64Value ?? 0
+        }
+        IOObjectRelease(service)
+        service = IOIteratorNext(iterator)
+    }
+    return counters
 }
 
 func refreshInterval() -> Int {
@@ -17,7 +54,12 @@ func refreshInterval() -> Int {
     return min(max(value, 1), 60)
 }
 
-func emit(_ counters: [String: Counters], interval: UInt64) {
+func emit(
+    _ counters: [String: Counters],
+    interval: UInt64,
+    previousDisk: inout DiskCounters,
+    previousDiskSampleTime: inout TimeInterval
+) {
     var externalDownload: UInt64 = 0
     var externalUpload: UInt64 = 0
     var interfaces: [String: [String: UInt64]] = [:]
@@ -34,9 +76,23 @@ func emit(_ counters: [String: Counters], interval: UInt64) {
         }
     }
 
+    let currentDisk = diskCounters()
+    let currentDiskSampleTime = ProcessInfo.processInfo.systemUptime
+    let diskSampleInterval = max(currentDiskSampleTime - previousDiskSampleTime, 0.001)
+    let diskRead = currentDisk.read >= previousDisk.read
+        ? currentDisk.read - previousDisk.read
+        : 0
+    let diskWrite = currentDisk.write >= previousDisk.write
+        ? currentDisk.write - previousDisk.write
+        : 0
+    previousDisk = currentDisk
+    previousDiskSampleTime = currentDiskSampleTime
+
     let payload: [String: Any] = [
         "downloadBytesPerSecond": externalDownload / interval,
         "uploadBytesPerSecond": externalUpload / interval,
+        "diskReadBytesPerSecond": UInt64(Double(diskRead) / diskSampleInterval),
+        "diskWriteBytesPerSecond": UInt64(Double(diskWrite) / diskSampleInterval),
         "interfaces": interfaces
     ]
 
@@ -55,14 +111,21 @@ func consume(
     _ line: String,
     sample: inout Int,
     counters: inout [String: Counters],
-    interval: UInt64
+    interval: UInt64,
+    previousDisk: inout DiskCounters,
+    previousDiskSampleTime: inout TimeInterval
 ) {
     let fields = line.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
     guard fields.count >= 4 else { return }
 
     if fields[0].isEmpty && fields[1] == "interface" {
         if sample >= 2 {
-            emit(counters, interval: interval)
+            emit(
+                counters,
+                interval: interval,
+                previousDisk: &previousDisk,
+                previousDiskSampleTime: &previousDiskSampleTime
+            )
         }
         counters.removeAll(keepingCapacity: true)
         sample += 1
@@ -108,6 +171,8 @@ do {
 var buffer = Data()
 var sample = 0
 var counters: [String: Counters] = [:]
+var previousDisk = diskCounters()
+var previousDiskSampleTime = ProcessInfo.processInfo.systemUptime
 let reader = output.fileHandleForReading
 
 while true {
@@ -123,7 +188,9 @@ while true {
                 line,
                 sample: &sample,
                 counters: &counters,
-                interval: UInt64(interval)
+                interval: UInt64(interval),
+                previousDisk: &previousDisk,
+                previousDiskSampleTime: &previousDiskSampleTime
             )
         }
     }
