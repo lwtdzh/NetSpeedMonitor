@@ -1,0 +1,149 @@
+import Combine
+import Darwin
+import Foundation
+
+struct InterfaceTraffic: Decodable {
+    let downloadBytesPerSecond: UInt64
+    let uploadBytesPerSecond: UInt64
+}
+
+struct TrafficSample: Decodable {
+    let downloadBytesPerSecond: UInt64
+    let uploadBytesPerSecond: UInt64
+    let interfaces: [String: InterfaceTraffic]
+}
+
+struct FormattedRate {
+    let value: String
+    let unit: String
+
+    var compact: String {
+        "\(value)\(unit)"
+    }
+}
+
+final class TrafficMonitor: ObservableObject {
+    @Published private(set) var downloadBytesPerSecond: UInt64 = 0
+    @Published private(set) var uploadBytesPerSecond: UInt64 = 0
+    @Published private(set) var interfaces: [String: InterfaceTraffic] = [:]
+    @Published private(set) var errorMessage: String?
+
+    private let decoder = JSONDecoder()
+    private let parsingQueue = DispatchQueue(label: "com.lwtdzh.NetSpeedMonitor.parser")
+    private var process: Process?
+    private var buffer = Data()
+    private var shouldRun = false
+
+    func menuBarText(unit: DataRateUnit) -> String {
+        menuBarLines(unit: unit).joined(separator: "\n")
+    }
+
+    func menuBarLines(unit: DataRateUnit) -> [String] {
+        let download = Self.formattedRate(downloadBytesPerSecond, unit: unit)
+        let upload = Self.formattedRate(uploadBytesPerSecond, unit: unit)
+        return ["↓\(download.compact)", "↑\(upload.compact)"]
+    }
+
+    func start() {
+        guard !shouldRun else { return }
+        shouldRun = true
+        launchHelper()
+    }
+
+    func stop() {
+        shouldRun = false
+        guard let process, process.isRunning else { return }
+        kill(-process.processIdentifier, SIGTERM)
+        self.process = nil
+    }
+
+    private func launchHelper() {
+        guard shouldRun, process == nil else { return }
+        guard let helperURL = Bundle.main.url(forResource: "net-speed-all", withExtension: nil) else {
+            errorMessage = "The bundled traffic helper is missing."
+            return
+        }
+
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = helperURL
+        process.standardOutput = output
+        process.standardError = Pipe()
+
+        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            self?.parsingQueue.async {
+                self?.consume(data)
+            }
+        }
+
+        process.terminationHandler = { [weak self, weak output] _ in
+            output?.fileHandleForReading.readabilityHandler = nil
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                guard let self else { return }
+                self.process = nil
+                if self.shouldRun {
+                    self.launchHelper()
+                }
+            }
+        }
+
+        do {
+            try process.run()
+            self.process = process
+            errorMessage = nil
+        } catch {
+            errorMessage = "Unable to start traffic helper: \(error.localizedDescription)"
+            self.process = nil
+        }
+    }
+
+    private func consume(_ data: Data) {
+        buffer.append(data)
+
+        while let newline = buffer.firstIndex(of: 0x0A) {
+            let line = Data(buffer[..<newline])
+            buffer.removeSubrange(...newline)
+
+            guard let sample = try? decoder.decode(TrafficSample.self, from: line) else {
+                continue
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                self?.downloadBytesPerSecond = sample.downloadBytesPerSecond
+                self?.uploadBytesPerSecond = sample.uploadBytesPerSecond
+                self?.interfaces = sample.interfaces
+                self?.errorMessage = nil
+            }
+        }
+    }
+
+    static func formattedRate(
+        _ bytesPerSecond: UInt64,
+        unit: DataRateUnit
+    ) -> FormattedRate {
+        let rate = Double(bytesPerSecond) * (unit == .bits ? 8 : 1)
+        let suffix = unit == .bits ? "b" : "B"
+
+        if rate >= 1_000_000_000 {
+            return FormattedRate(
+                value: String(format: "%.1f", rate / 1_000_000_000),
+                unit: "G\(suffix)"
+            )
+        }
+        if rate >= 1_000_000 {
+            return FormattedRate(
+                value: String(format: "%.1f", rate / 1_000_000),
+                unit: "M\(suffix)"
+            )
+        }
+        if rate >= 1_000 {
+            return FormattedRate(
+                value: String(format: "%.1f", rate / 1_000),
+                unit: "K\(suffix)"
+            )
+        }
+        return FormattedRate(value: String(format: "%.0f", rate), unit: suffix)
+    }
+}

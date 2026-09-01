@@ -1,0 +1,49 @@
+name: NetSpeedMonitor
+options:
+  bundleIdPrefix: com.lwtdzh
+  deploymentTarget:
+    macOS: "13.0"
+settings:
+  base:
+    ARCHS: arm64 x86_64
+    ONLY_ACTIVE_ARCH: NO
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+targets:
+  NetSpeedHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - Sources/NetSpeedHelper
+    settings:
+      base:
+        PRODUCT_NAME: net-speed-all
+        PRODUCT_BUNDLE_IDENTIFIER: com.lwtdzh.NetSpeedMonitor.helper
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+  NetSpeedMonitor:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/NetSpeedMonitor
+    dependencies:
+      - target: NetSpeedHelper
+    settings:
+      base:
+        PRODUCT_NAME: Net Speed Monitor
+        PRODUCT_BUNDLE_IDENTIFIER: com.lwtdzh.NetSpeedMonitor
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Net Speed Monitor
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        INFOPLIST_KEY_LSUIElement: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+    postBuildScripts:
+      - name: Embed net-speed-all
+        script: |
+          set -eu
+          helper_source="${BUILT_PRODUCTS_DIR}/net-speed-all"
+          resources_dir="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
+          mkdir -p "${resources_dir}"
+          install -m 755 "${helper_source}" "${resources_dir}/net-speed-all"
+        basedOnDependencyAnalysis: false
