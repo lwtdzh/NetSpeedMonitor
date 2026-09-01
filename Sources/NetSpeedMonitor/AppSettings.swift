@@ -17,19 +17,24 @@ enum DataRateUnit: String, CaseIterable, Identifiable {
 }
 
 final class AppSettings: ObservableObject {
+    static let refreshIntervalOptions = [1, 2, 3, 5, 10]
+
     private enum Key {
         static let showMenuBar = "showMenuBar"
         static let showFloatingPanel = "showFloatingPanel"
         static let dataRateUnit = "dataRateUnit"
+        static let refreshInterval = "refreshInterval"
     }
 
     @Published private(set) var launchAtLogin: Bool
     @Published private(set) var showMenuBar: Bool
     @Published private(set) var showFloatingPanel: Bool
     @Published private(set) var dataRateUnit: DataRateUnit
+    @Published private(set) var refreshInterval: Int
     @Published var errorMessage: String?
 
     var onPresentationChanged: (() -> Void)?
+    var onRefreshIntervalChanged: ((Int) -> Void)?
 
     init(defaults: UserDefaults = .standard) {
         launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -38,6 +43,10 @@ final class AppSettings: ObservableObject {
         dataRateUnit = DataRateUnit(
             rawValue: defaults.string(forKey: Key.dataRateUnit) ?? ""
         ) ?? .bits
+        let savedRefreshInterval = defaults.integer(forKey: Key.refreshInterval)
+        refreshInterval = Self.refreshIntervalOptions.contains(savedRefreshInterval)
+            ? savedRefreshInterval
+            : 1
 
         if !showMenuBar && !showFloatingPanel {
             showMenuBar = true
@@ -79,6 +88,13 @@ final class AppSettings: ObservableObject {
         dataRateUnit = unit
         UserDefaults.standard.set(unit.rawValue, forKey: Key.dataRateUnit)
         onPresentationChanged?()
+    }
+
+    func setRefreshInterval(_ interval: Int) {
+        guard Self.refreshIntervalOptions.contains(interval) else { return }
+        refreshInterval = interval
+        UserDefaults.standard.set(interval, forKey: Key.refreshInterval)
+        onRefreshIntervalChanged?(interval)
     }
 
     private func savePresentation() {

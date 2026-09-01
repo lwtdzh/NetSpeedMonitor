@@ -6,15 +6,26 @@ struct Counters {
     var upload: UInt64 = 0
 }
 
-func emit(_ counters: [String: Counters]) {
+func refreshInterval() -> Int {
+    guard
+        let flagIndex = CommandLine.arguments.firstIndex(of: "--interval"),
+        CommandLine.arguments.indices.contains(flagIndex + 1),
+        let value = Int(CommandLine.arguments[flagIndex + 1])
+    else {
+        return 1
+    }
+    return min(max(value, 1), 60)
+}
+
+func emit(_ counters: [String: Counters], interval: UInt64) {
     var externalDownload: UInt64 = 0
     var externalUpload: UInt64 = 0
     var interfaces: [String: [String: UInt64]] = [:]
 
     for (name, value) in counters {
         interfaces[name] = [
-            "downloadBytesPerSecond": value.download,
-            "uploadBytesPerSecond": value.upload
+            "downloadBytesPerSecond": value.download / interval,
+            "uploadBytesPerSecond": value.upload / interval
         ]
 
         if name != "lo0" {
@@ -24,8 +35,8 @@ func emit(_ counters: [String: Counters]) {
     }
 
     let payload: [String: Any] = [
-        "downloadBytesPerSecond": externalDownload,
-        "uploadBytesPerSecond": externalUpload,
+        "downloadBytesPerSecond": externalDownload / interval,
+        "uploadBytesPerSecond": externalUpload / interval,
         "interfaces": interfaces
     ]
 
@@ -40,13 +51,18 @@ func emit(_ counters: [String: Counters]) {
     FileHandle.standardOutput.write(Data(line.utf8))
 }
 
-func consume(_ line: String, sample: inout Int, counters: inout [String: Counters]) {
+func consume(
+    _ line: String,
+    sample: inout Int,
+    counters: inout [String: Counters],
+    interval: UInt64
+) {
     let fields = line.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
     guard fields.count >= 4 else { return }
 
     if fields[0].isEmpty && fields[1] == "interface" {
         if sample >= 2 {
-            emit(counters)
+            emit(counters, interval: interval)
         }
         counters.removeAll(keepingCapacity: true)
         sample += 1
@@ -70,11 +86,12 @@ func consume(_ line: String, sample: inout Int, counters: inout [String: Counter
 
 _ = setpgid(0, 0)
 
+let interval = refreshInterval()
 let nettop = Process()
 let output = Pipe()
 nettop.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
 nettop.arguments = [
-    "-n", "-d", "-L", "0", "-s", "1", "-x",
+    "-n", "-d", "-L", "0", "-s", String(interval), "-x",
     "-J", "interface,bytes_in,bytes_out"
 ]
 nettop.environment = ProcessInfo.processInfo.environment.merging(["LC_ALL": "C"]) { _, new in new }
@@ -102,7 +119,12 @@ while true {
         let lineData = buffer[..<newline]
         buffer.removeSubrange(...newline)
         if let line = String(data: lineData, encoding: .utf8) {
-            consume(line, sample: &sample, counters: &counters)
+            consume(
+                line,
+                sample: &sample,
+                counters: &counters,
+                interval: UInt64(interval)
+            )
         }
     }
 }

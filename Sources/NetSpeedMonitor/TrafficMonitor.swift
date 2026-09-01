@@ -33,6 +33,7 @@ final class TrafficMonitor: ObservableObject {
     private var process: Process?
     private var buffer = Data()
     private var shouldRun = false
+    private var refreshInterval = 1
 
     func menuBarText(unit: DataRateUnit) -> String {
         menuBarLines(unit: unit).joined(separator: "\n")
@@ -44,17 +45,26 @@ final class TrafficMonitor: ObservableObject {
         return ["↓\(download.compact)", "↑\(upload.compact)"]
     }
 
-    func start() {
+    func start(refreshInterval: Int = 1) {
+        self.refreshInterval = max(1, refreshInterval)
         guard !shouldRun else { return }
         shouldRun = true
         launchHelper()
     }
 
+    func setRefreshInterval(_ interval: Int) {
+        let interval = max(1, interval)
+        guard interval != refreshInterval else { return }
+        refreshInterval = interval
+        guard shouldRun else { return }
+
+        stopHelper()
+        launchHelper()
+    }
+
     func stop() {
         shouldRun = false
-        guard let process, process.isRunning else { return }
-        kill(-process.processIdentifier, SIGTERM)
-        self.process = nil
+        stopHelper()
     }
 
     private func launchHelper() {
@@ -67,6 +77,7 @@ final class TrafficMonitor: ObservableObject {
         let process = Process()
         let output = Pipe()
         process.executableURL = helperURL
+        process.arguments = ["--interval", String(refreshInterval)]
         process.standardOutput = output
         process.standardError = Pipe()
 
@@ -78,10 +89,11 @@ final class TrafficMonitor: ObservableObject {
             }
         }
 
-        process.terminationHandler = { [weak self, weak output] _ in
+        process.terminationHandler = { [weak self, weak output] terminatedProcess in
             output?.fileHandleForReading.readabilityHandler = nil
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 guard let self else { return }
+                guard self.process === terminatedProcess else { return }
                 self.process = nil
                 if self.shouldRun {
                     self.launchHelper()
@@ -96,6 +108,21 @@ final class TrafficMonitor: ObservableObject {
         } catch {
             errorMessage = "Unable to start traffic helper: \(error.localizedDescription)"
             self.process = nil
+        }
+    }
+
+    private func stopHelper() {
+        guard let process else { return }
+        (process.standardOutput as? Pipe)?
+            .fileHandleForReading
+            .readabilityHandler = nil
+        process.terminationHandler = nil
+        if process.isRunning {
+            kill(-process.processIdentifier, SIGTERM)
+        }
+        self.process = nil
+        parsingQueue.sync {
+            buffer.removeAll(keepingCapacity: true)
         }
     }
 

@@ -24,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.applyPresentationSettings()
             }
         }
+        settings.onRefreshIntervalChanged = { [weak self] interval in
+            self?.monitor.setRefreshInterval(interval)
+        }
 
         monitor.$downloadBytesPerSecond
             .combineLatest(monitor.$uploadBytesPerSecond)
@@ -34,7 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         applyPresentationSettings()
-        monitor.start()
+        monitor.start(refreshInterval: settings.refreshInterval)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -110,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .font: font,
             .foregroundColor: NSColor.controlTextColor,
             .paragraphStyle: paragraph,
-            .baselineOffset: -3.5
+            .baselineOffset: -3.7
         ]
 
         statusItem?.button?.attributedTitle = NSAttributedString(

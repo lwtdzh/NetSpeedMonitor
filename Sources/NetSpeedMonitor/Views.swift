@@ -217,7 +217,19 @@ struct SettingsView: View {
                 )
             )
 
-            LabeledContent("Refresh interval", value: "1 second")
+            Picker(
+                "Refresh interval",
+                selection: Binding(
+                    get: { settings.refreshInterval },
+                    set: settings.setRefreshInterval
+                )
+            ) {
+                ForEach(AppSettings.refreshIntervalOptions, id: \.self) { interval in
+                    Text(interval == 1 ? "1 second" : "\(interval) seconds")
+                        .tag(interval)
+                }
+            }
+            .pickerStyle(.menu)
 
             if let error = settings.errorMessage {
                 Text(error)
