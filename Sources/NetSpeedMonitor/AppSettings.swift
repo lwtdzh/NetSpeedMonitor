@@ -26,6 +26,8 @@ final class AppSettings: ObservableObject {
         static let showUpload = "showUpload"
         static let showDiskRead = "showDiskRead"
         static let showDiskWrite = "showDiskWrite"
+        static let showCPU = "showCPU"
+        static let showMemory = "showMemory"
         static let dataRateUnit = "dataRateUnit"
         static let refreshInterval = "refreshInterval"
     }
@@ -37,6 +39,8 @@ final class AppSettings: ObservableObject {
     @Published private(set) var showUpload: Bool
     @Published private(set) var showDiskRead: Bool
     @Published private(set) var showDiskWrite: Bool
+    @Published private(set) var showCPU: Bool
+    @Published private(set) var showMemory: Bool
     @Published private(set) var dataRateUnit: DataRateUnit
     @Published private(set) var refreshInterval: Int
     @Published var errorMessage: String?
@@ -52,6 +56,8 @@ final class AppSettings: ObservableObject {
         showUpload = defaults.object(forKey: Key.showUpload) as? Bool ?? true
         showDiskRead = defaults.object(forKey: Key.showDiskRead) as? Bool ?? true
         showDiskWrite = defaults.object(forKey: Key.showDiskWrite) as? Bool ?? true
+        showCPU = defaults.object(forKey: Key.showCPU) as? Bool ?? true
+        showMemory = defaults.object(forKey: Key.showMemory) as? Bool ?? true
         dataRateUnit = DataRateUnit(
             rawValue: defaults.string(forKey: Key.dataRateUnit) ?? ""
         ) ?? .bits
@@ -63,7 +69,7 @@ final class AppSettings: ObservableObject {
         if !showMenuBar && !showFloatingPanel {
             showMenuBar = true
         }
-        if !showDownload && !showUpload && !showDiskRead && !showDiskWrite {
+        if !showDownload && !showUpload && !showDiskRead && !showDiskWrite && !showCPU && !showMemory {
             showDownload = true
         }
     }
@@ -100,26 +106,42 @@ final class AppSettings: ObservableObject {
     }
 
     func setShowDownload(_ enabled: Bool) {
-        guard enabled || showUpload || showDiskRead || showDiskWrite else { return }
+        guard enabled || showUpload || showDiskRead || showDiskWrite || showCPU || showMemory else { return }
         showDownload = enabled
         saveMetricVisibility()
     }
 
     func setShowUpload(_ enabled: Bool) {
-        guard enabled || showDownload || showDiskRead || showDiskWrite else { return }
+        guard enabled || showDownload || showDiskRead || showDiskWrite || showCPU || showMemory else { return }
         showUpload = enabled
         saveMetricVisibility()
     }
 
     func setShowDiskRead(_ enabled: Bool) {
-        guard enabled || showDownload || showUpload || showDiskWrite else { return }
+        guard enabled || showDownload || showUpload || showDiskWrite || showCPU || showMemory else { return }
         showDiskRead = enabled
         saveMetricVisibility()
     }
 
     func setShowDiskWrite(_ enabled: Bool) {
-        guard enabled || showDownload || showUpload || showDiskRead else { return }
+        guard enabled || showDownload || showUpload || showDiskRead || showCPU || showMemory else { return }
         showDiskWrite = enabled
+        saveMetricVisibility()
+    }
+
+    func setShowCPU(_ enabled: Bool) {
+        guard enabled || showDownload || showUpload || showDiskRead || showDiskWrite || showMemory else {
+            return
+        }
+        showCPU = enabled
+        saveMetricVisibility()
+    }
+
+    func setShowMemory(_ enabled: Bool) {
+        guard enabled || showDownload || showUpload || showDiskRead || showDiskWrite || showCPU else {
+            return
+        }
+        showMemory = enabled
         saveMetricVisibility()
     }
 
@@ -147,6 +169,8 @@ final class AppSettings: ObservableObject {
         UserDefaults.standard.set(showUpload, forKey: Key.showUpload)
         UserDefaults.standard.set(showDiskRead, forKey: Key.showDiskRead)
         UserDefaults.standard.set(showDiskWrite, forKey: Key.showDiskWrite)
+        UserDefaults.standard.set(showCPU, forKey: Key.showCPU)
+        UserDefaults.standard.set(showMemory, forKey: Key.showMemory)
         onPresentationChanged?()
     }
 }

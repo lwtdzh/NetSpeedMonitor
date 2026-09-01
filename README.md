@@ -5,7 +5,7 @@ the menu bar and an optional always-on-top floating panel.
 
 ## Features
 
-- Download, upload, disk-read, and disk-write indicators
+- Download, upload, disk-read, disk-write, CPU, and memory indicators
 - Independently selectable rates, with at least one always visible
 - Borderless, resizable, always-on-top floating panel
 - Bits/s and Bytes/s display modes

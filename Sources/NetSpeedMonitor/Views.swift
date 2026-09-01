@@ -89,8 +89,11 @@ struct SpeedPanelView: View {
         GeometryReader { geometry in
             let diskRowCount = (settings.showDiskRead ? 1 : 0) + (settings.showDiskWrite ? 1 : 0)
             let networkRowCount = (settings.showDownload ? 1 : 0) + (settings.showUpload ? 1 : 0)
-            let groupCount = (diskRowCount > 0 ? 1 : 0) + (networkRowCount > 0 ? 1 : 0)
-            let rowCount = max(diskRowCount, networkRowCount)
+            let systemRowCount = (settings.showCPU ? 1 : 0) + (settings.showMemory ? 1 : 0)
+            let groupCount = (diskRowCount > 0 ? 1 : 0)
+                + (networkRowCount > 0 ? 1 : 0)
+                + (systemRowCount > 0 ? 1 : 0)
+            let rowCount = max(diskRowCount, max(networkRowCount, systemRowCount))
             let fontSize = min(
                 min(
                     max(geometry.size.width / (7.2 * CGFloat(groupCount)), 10),
@@ -137,6 +140,26 @@ struct SpeedPanelView: View {
                                 systemImage: "arrow.up",
                                 color: .orange,
                                 bytesPerSecond: monitor.uploadBytesPerSecond,
+                                fontSize: fontSize
+                            )
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+
+                if systemRowCount > 0 {
+                    VStack(spacing: max(2, fontSize * 0.08)) {
+                        if settings.showCPU {
+                            percentage(
+                                label: "C",
+                                value: monitor.cpuUsagePercent,
+                                fontSize: fontSize
+                            )
+                        }
+                        if settings.showMemory {
+                            percentage(
+                                label: "M",
+                                value: monitor.memoryUsagePercent,
                                 fontSize: fontSize
                             )
                         }
@@ -215,6 +238,21 @@ struct SpeedPanelView: View {
         .minimumScaleFactor(0.45)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    private func percentage(label: String, value: UInt64, fontSize: CGFloat) -> some View {
+        HStack(spacing: max(3, fontSize * 0.28)) {
+            Text(label)
+                .foregroundStyle(.secondary)
+                .frame(width: fontSize, alignment: .center)
+            Text("\(TrafficMonitor.formattedPercent(value))%")
+                .foregroundStyle(.primary)
+                .monospacedDigit()
+        }
+        .font(.system(size: fontSize, weight: .semibold))
+        .lineLimit(1)
+        .minimumScaleFactor(0.45)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
 
 struct SettingsView: View {
@@ -249,6 +287,20 @@ struct SettingsView: View {
                     isOn: Binding(
                         get: { settings.showDiskWrite },
                         set: settings.setShowDiskWrite
+                    )
+                )
+                Toggle(
+                    "CPU usage",
+                    isOn: Binding(
+                        get: { settings.showCPU },
+                        set: settings.setShowCPU
+                    )
+                )
+                Toggle(
+                    "Memory usage",
+                    isOn: Binding(
+                        get: { settings.showMemory },
+                        set: settings.setShowMemory
                     )
                 )
                 Text("At least one rate must remain visible.")
@@ -318,6 +370,6 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(8)
-        .frame(width: 400, height: 430)
+        .frame(width: 400, height: 500)
     }
 }

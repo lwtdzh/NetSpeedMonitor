@@ -12,6 +12,8 @@ struct TrafficSample: Decodable {
     let uploadBytesPerSecond: UInt64
     let diskReadBytesPerSecond: UInt64
     let diskWriteBytesPerSecond: UInt64
+    let cpuUsagePercent: UInt64
+    let memoryUsagePercent: UInt64
     let interfaces: [String: InterfaceTraffic]
 }
 
@@ -24,9 +26,20 @@ struct FormattedRate {
     }
 }
 
+struct MenuBarMetric {
+    let symbol: String
+    let value: String
+    let unit: String
+
+    var accessibilityText: String {
+        "\(symbol) \(value)\(unit)"
+    }
+}
+
 struct MenuBarColumns {
-    let disk: [String]
-    let network: [String]
+    let disk: [MenuBarMetric]
+    let network: [MenuBarMetric]
+    let system: [MenuBarMetric]
 }
 
 final class TrafficMonitor: ObservableObject {
@@ -34,6 +47,8 @@ final class TrafficMonitor: ObservableObject {
     @Published private(set) var uploadBytesPerSecond: UInt64 = 0
     @Published private(set) var diskReadBytesPerSecond: UInt64 = 0
     @Published private(set) var diskWriteBytesPerSecond: UInt64 = 0
+    @Published private(set) var cpuUsagePercent: UInt64 = 0
+    @Published private(set) var memoryUsagePercent: UInt64 = 0
     @Published private(set) var interfaces: [String: InterfaceTraffic] = [:]
     @Published private(set) var errorMessage: String?
 
@@ -45,22 +60,37 @@ final class TrafficMonitor: ObservableObject {
     private var refreshInterval = 1
 
     func menuBarColumns(unit: DataRateUnit, settings: AppSettings) -> MenuBarColumns {
-        var diskLines: [String] = []
-        var networkLines: [String] = []
+        var diskLines: [MenuBarMetric] = []
+        var networkLines: [MenuBarMetric] = []
+        var systemLines: [MenuBarMetric] = []
 
         if settings.showDiskWrite {
-            diskLines.append("W \(Self.formattedRate(diskWriteBytesPerSecond, unit: unit).compact)")
+            let rate = Self.formattedRate(diskWriteBytesPerSecond, unit: unit)
+            diskLines.append(MenuBarMetric(symbol: "W", value: rate.value, unit: rate.unit))
         }
         if settings.showDiskRead {
-            diskLines.append("R \(Self.formattedRate(diskReadBytesPerSecond, unit: unit).compact)")
+            let rate = Self.formattedRate(diskReadBytesPerSecond, unit: unit)
+            diskLines.append(MenuBarMetric(symbol: "R", value: rate.value, unit: rate.unit))
         }
         if settings.showDownload {
-            networkLines.append("↓\(Self.formattedRate(downloadBytesPerSecond, unit: unit).compact)")
+            let rate = Self.formattedRate(downloadBytesPerSecond, unit: unit)
+            networkLines.append(MenuBarMetric(symbol: "↓", value: rate.value, unit: rate.unit))
         }
         if settings.showUpload {
-            networkLines.append("↑\(Self.formattedRate(uploadBytesPerSecond, unit: unit).compact)")
+            let rate = Self.formattedRate(uploadBytesPerSecond, unit: unit)
+            networkLines.append(MenuBarMetric(symbol: "↑", value: rate.value, unit: rate.unit))
         }
-        return MenuBarColumns(disk: diskLines, network: networkLines)
+        if settings.showCPU {
+            systemLines.append(
+                MenuBarMetric(symbol: "C", value: Self.formattedPercent(cpuUsagePercent), unit: "%")
+            )
+        }
+        if settings.showMemory {
+            systemLines.append(
+                MenuBarMetric(symbol: "M", value: Self.formattedPercent(memoryUsagePercent), unit: "%")
+            )
+        }
+        return MenuBarColumns(disk: diskLines, network: networkLines, system: systemLines)
     }
 
     func start(refreshInterval: Int = 1) {
@@ -160,6 +190,8 @@ final class TrafficMonitor: ObservableObject {
                 self?.uploadBytesPerSecond = sample.uploadBytesPerSecond
                 self?.diskReadBytesPerSecond = sample.diskReadBytesPerSecond
                 self?.diskWriteBytesPerSecond = sample.diskWriteBytesPerSecond
+                self?.cpuUsagePercent = sample.cpuUsagePercent
+                self?.memoryUsagePercent = sample.memoryUsagePercent
                 self?.interfaces = sample.interfaces
                 self?.errorMessage = nil
             }
@@ -170,27 +202,48 @@ final class TrafficMonitor: ObservableObject {
         _ bytesPerSecond: UInt64,
         unit: DataRateUnit
     ) -> FormattedRate {
-        let rate = Double(bytesPerSecond) * (unit == .bits ? 8 : 1)
         let suffix = unit == .bits ? "b" : "B"
+        let prefixes = ["", "K", "M", "G", "T", "P", "E"]
+        var value = Double(bytesPerSecond) * (unit == .bits ? 8 : 1)
+        var prefixIndex = 0
 
-        if rate >= 1_000_000_000 {
-            return FormattedRate(
-                value: String(format: "%.1f", rate / 1_000_000_000),
-                unit: "G\(suffix)"
-            )
+        while value >= 1_000, prefixIndex < prefixes.count - 1 {
+            value /= 1_000
+            prefixIndex += 1
         }
-        if rate >= 1_000_000 {
-            return FormattedRate(
-                value: String(format: "%.1f", rate / 1_000_000),
-                unit: "M\(suffix)"
-            )
+
+        var decimalPlaces = Self.decimalPlacesForFourDigits(value)
+        let rounded = value.rounded(toDecimalPlaces: decimalPlaces)
+        if rounded >= 1_000, prefixIndex < prefixes.count - 1 {
+            value = rounded / 1_000
+            prefixIndex += 1
+            decimalPlaces = Self.decimalPlacesForFourDigits(value)
         }
-        if rate >= 1_000 {
-            return FormattedRate(
-                value: String(format: "%.1f", rate / 1_000),
-                unit: "K\(suffix)"
-            )
+
+        return FormattedRate(
+            value: String(format: "%.\(decimalPlaces)f", value),
+            unit: "\(prefixes[prefixIndex])\(suffix)"
+        )
+    }
+
+    private static func decimalPlacesForFourDigits(_ value: Double) -> Int {
+        if value >= 100 {
+            return 1
         }
-        return FormattedRate(value: String(format: "%.0f", rate), unit: suffix)
+        if value >= 10 {
+            return 2
+        }
+        return 3
+    }
+
+    static func formattedPercent(_ value: UInt64) -> String {
+        value >= 100 ? "F" : "\(value)"
+    }
+}
+
+private extension Double {
+    func rounded(toDecimalPlaces places: Int) -> Double {
+        let scale = pow(10, Double(places))
+        return (self * scale).rounded() / scale
     }
 }

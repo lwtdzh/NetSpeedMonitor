@@ -12,6 +12,69 @@ struct DiskCounters {
     var write: UInt64 = 0
 }
 
+struct CPUCounters {
+    var active: UInt64 = 0
+    var total: UInt64 = 0
+}
+
+func cpuCounters() -> CPUCounters {
+    var cpuCount: natural_t = 0
+    var cpuInfo: processor_info_array_t?
+    var infoCount: mach_msg_type_number_t = 0
+    guard
+        host_processor_info(
+            mach_host_self(),
+            PROCESSOR_CPU_LOAD_INFO,
+            &cpuCount,
+            &cpuInfo,
+            &infoCount
+        ) == KERN_SUCCESS,
+        let cpuInfo
+    else {
+        return CPUCounters()
+    }
+    defer {
+        vm_deallocate(
+            mach_task_self_,
+            vm_address_t(UInt(bitPattern: cpuInfo)),
+            vm_size_t(infoCount) * vm_size_t(MemoryLayout<integer_t>.stride)
+        )
+    }
+
+    var counters = CPUCounters()
+    for cpu in 0..<Int(cpuCount) {
+        let offset = cpu * Int(CPU_STATE_MAX)
+        let user = UInt64(cpuInfo[offset + Int(CPU_STATE_USER)])
+        let system = UInt64(cpuInfo[offset + Int(CPU_STATE_SYSTEM)])
+        let nice = UInt64(cpuInfo[offset + Int(CPU_STATE_NICE)])
+        let idle = UInt64(cpuInfo[offset + Int(CPU_STATE_IDLE)])
+        counters.active += user + system + nice
+        counters.total += user + system + nice + idle
+    }
+    return counters
+}
+
+func memoryUsagePercent() -> UInt64 {
+    var statistics = vm_statistics64()
+    var count = mach_msg_type_number_t(
+        MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size
+    )
+    let result = withUnsafeMutablePointer(to: &statistics) { pointer in
+        pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+            host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+        }
+    }
+    guard result == KERN_SUCCESS else { return 0 }
+
+    let usedPages = UInt64(statistics.active_count)
+        + UInt64(statistics.wire_count)
+        + UInt64(statistics.compressor_page_count)
+    let usedBytes = usedPages * UInt64(vm_kernel_page_size)
+    let totalBytes = ProcessInfo.processInfo.physicalMemory
+    guard totalBytes > 0 else { return 0 }
+    return min(100, UInt64((Double(usedBytes) / Double(totalBytes) * 100).rounded()))
+}
+
 func diskCounters() -> DiskCounters {
     var iterator: io_iterator_t = 0
     guard
@@ -58,7 +121,8 @@ func emit(
     _ counters: [String: Counters],
     interval: UInt64,
     previousDisk: inout DiskCounters,
-    previousDiskSampleTime: inout TimeInterval
+    previousDiskSampleTime: inout TimeInterval,
+    previousCPU: inout CPUCounters
 ) {
     var externalDownload: UInt64 = 0
     var externalUpload: UInt64 = 0
@@ -88,11 +152,25 @@ func emit(
     previousDisk = currentDisk
     previousDiskSampleTime = currentDiskSampleTime
 
+    let currentCPU = cpuCounters()
+    let activeDelta = currentCPU.active >= previousCPU.active
+        ? currentCPU.active - previousCPU.active
+        : 0
+    let totalDelta = currentCPU.total >= previousCPU.total
+        ? currentCPU.total - previousCPU.total
+        : 0
+    previousCPU = currentCPU
+    let cpuUsage = totalDelta > 0
+        ? min(100, UInt64((Double(activeDelta) / Double(totalDelta) * 100).rounded()))
+        : 0
+
     let payload: [String: Any] = [
         "downloadBytesPerSecond": externalDownload / interval,
         "uploadBytesPerSecond": externalUpload / interval,
         "diskReadBytesPerSecond": UInt64(Double(diskRead) / diskSampleInterval),
         "diskWriteBytesPerSecond": UInt64(Double(diskWrite) / diskSampleInterval),
+        "cpuUsagePercent": cpuUsage,
+        "memoryUsagePercent": memoryUsagePercent(),
         "interfaces": interfaces
     ]
 
@@ -113,7 +191,8 @@ func consume(
     counters: inout [String: Counters],
     interval: UInt64,
     previousDisk: inout DiskCounters,
-    previousDiskSampleTime: inout TimeInterval
+    previousDiskSampleTime: inout TimeInterval,
+    previousCPU: inout CPUCounters
 ) {
     let fields = line.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
     guard fields.count >= 4 else { return }
@@ -124,7 +203,8 @@ func consume(
                 counters,
                 interval: interval,
                 previousDisk: &previousDisk,
-                previousDiskSampleTime: &previousDiskSampleTime
+                previousDiskSampleTime: &previousDiskSampleTime,
+                previousCPU: &previousCPU
             )
         }
         counters.removeAll(keepingCapacity: true)
@@ -173,6 +253,7 @@ var sample = 0
 var counters: [String: Counters] = [:]
 var previousDisk = diskCounters()
 var previousDiskSampleTime = ProcessInfo.processInfo.systemUptime
+var previousCPU = cpuCounters()
 let reader = output.fileHandleForReading
 
 while true {
@@ -190,7 +271,8 @@ while true {
                 counters: &counters,
                 interval: UInt64(interval),
                 previousDisk: &previousDisk,
-                previousDiskSampleTime: &previousDiskSampleTime
+                previousDiskSampleTime: &previousDiskSampleTime,
+                previousCPU: &previousCPU
             )
         }
     }
