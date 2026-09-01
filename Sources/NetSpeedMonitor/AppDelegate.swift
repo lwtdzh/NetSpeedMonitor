@@ -60,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
             button.cell?.usesSingleLineMode = false
-            button.cell?.wraps = true
+            button.cell?.wraps = false
             button.alignment = .left
             button.toolTip = "Net Speed Monitor"
         }
@@ -110,7 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .font: font,
             .foregroundColor: NSColor.controlTextColor,
             .paragraphStyle: paragraph,
-            .baselineOffset: -5.25
+            .baselineOffset: -3.5
         ]
 
         statusItem?.button?.attributedTitle = NSAttributedString(
@@ -121,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let longestLine = lines
             .map { ($0 as NSString).size(withAttributes: [.font: font]).width }
             .max() ?? 0
-        statusItem?.length = max(34, ceil(longestLine) + 8)
+        statusItem?.length = max(28, ceil(longestLine) + 1)
 
         if
             let item = statusItem?.menu?.items.first(
