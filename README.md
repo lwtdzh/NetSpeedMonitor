@@ -64,7 +64,8 @@ opens Settings.
 
 ## How It Works
 
-The app bundles a universal `net-speed-all` helper. The helper reads per-flow
-traffic data from macOS `nettop`, aggregates it by network interface, and reads
-disk byte counters through IOKit. It streams newline-delimited JSON samples to
-the app. All processing remains local to the Mac.
+The app bundles a universal `net-speed-all` helper. The helper takes brief
+process-level network counter snapshots, reads disk byte counters through
+IOKit, and streams newline-delimited JSON samples to the app. It does not keep
+macOS `nettop` running between refreshes. All processing remains local to the
+Mac.

@@ -17,6 +17,51 @@ struct CPUCounters {
     var total: UInt64 = 0
 }
 
+func networkCounters() -> [String: Counters] {
+    let process = Process()
+    let output = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
+    process.arguments = [
+        "-P", "-t", "external", "-L", "1", "-n", "-x",
+        "-J", "bytes_in,bytes_out"
+    ]
+    process.environment = ProcessInfo.processInfo.environment.merging(
+        ["LC_ALL": "C"]
+    ) { _, new in new }
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+
+    do {
+        try process.run()
+    } catch {
+        return [:]
+    }
+
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard
+        process.terminationStatus == EXIT_SUCCESS,
+        let text = String(data: data, encoding: .utf8)
+    else {
+        return [:]
+    }
+
+    var counters: [String: Counters] = [:]
+    for line in text.split(separator: "\n").dropFirst() {
+        let fields = line.split(separator: ",", omittingEmptySubsequences: false)
+        guard
+            fields.count >= 3,
+            !fields[0].isEmpty,
+            let download = UInt64(fields[1]),
+            let upload = UInt64(fields[2])
+        else {
+            continue
+        }
+        counters[String(fields[0])] = Counters(download: download, upload: upload)
+    }
+    return counters
+}
+
 func cpuCounters() -> CPUCounters {
     var cpuCount: natural_t = 0
     var cpuInfo: processor_info_array_t?
@@ -118,27 +163,36 @@ func refreshInterval() -> Int {
 }
 
 func emit(
-    _ counters: [String: Counters],
-    interval: UInt64,
+    previousNetwork: inout [String: Counters],
+    previousNetworkSampleTime: inout TimeInterval,
     previousDisk: inout DiskCounters,
     previousDiskSampleTime: inout TimeInterval,
     previousCPU: inout CPUCounters
 ) {
+    let currentNetwork = networkCounters()
+    let currentNetworkSampleTime = ProcessInfo.processInfo.systemUptime
+    let networkSampleInterval = max(currentNetworkSampleTime - previousNetworkSampleTime, 0.001)
     var externalDownload: UInt64 = 0
     var externalUpload: UInt64 = 0
     var interfaces: [String: [String: UInt64]] = [:]
 
-    for (name, value) in counters {
-        interfaces[name] = [
-            "downloadBytesPerSecond": value.download / interval,
-            "uploadBytesPerSecond": value.upload / interval
-        ]
-
-        if name != "lo0" {
-            externalDownload += value.download
-            externalUpload += value.upload
-        }
+    for (process, current) in currentNetwork {
+        guard let previous = previousNetwork[process] else { continue }
+        let download = current.download >= previous.download
+            ? current.download - previous.download
+            : 0
+        let upload = current.upload >= previous.upload
+            ? current.upload - previous.upload
+            : 0
+        externalDownload += download
+        externalUpload += upload
     }
+    previousNetwork = currentNetwork
+    previousNetworkSampleTime = currentNetworkSampleTime
+    interfaces["external"] = [
+        "downloadBytesPerSecond": UInt64(Double(externalDownload) / networkSampleInterval),
+        "uploadBytesPerSecond": UInt64(Double(externalUpload) / networkSampleInterval)
+    ]
 
     let currentDisk = diskCounters()
     let currentDiskSampleTime = ProcessInfo.processInfo.systemUptime
@@ -165,8 +219,8 @@ func emit(
         : 0
 
     let payload: [String: Any] = [
-        "downloadBytesPerSecond": externalDownload / interval,
-        "uploadBytesPerSecond": externalUpload / interval,
+        "downloadBytesPerSecond": UInt64(Double(externalDownload) / networkSampleInterval),
+        "uploadBytesPerSecond": UInt64(Double(externalUpload) / networkSampleInterval),
         "diskReadBytesPerSecond": UInt64(Double(diskRead) / diskSampleInterval),
         "diskWriteBytesPerSecond": UInt64(Double(diskWrite) / diskSampleInterval),
         "cpuUsagePercent": cpuUsage,
@@ -185,98 +239,22 @@ func emit(
     FileHandle.standardOutput.write(Data(line.utf8))
 }
 
-func consume(
-    _ line: String,
-    sample: inout Int,
-    counters: inout [String: Counters],
-    interval: UInt64,
-    previousDisk: inout DiskCounters,
-    previousDiskSampleTime: inout TimeInterval,
-    previousCPU: inout CPUCounters
-) {
-    let fields = line.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
-    guard fields.count >= 4 else { return }
-
-    if fields[0].isEmpty && fields[1] == "interface" {
-        if sample >= 2 {
-            emit(
-                counters,
-                interval: interval,
-                previousDisk: &previousDisk,
-                previousDiskSampleTime: &previousDiskSampleTime,
-                previousCPU: &previousCPU
-            )
-        }
-        counters.removeAll(keepingCapacity: true)
-        sample += 1
-        return
-    }
-
-    let interface = fields[1]
-    guard
-        !interface.isEmpty,
-        let download = UInt64(fields[2]),
-        let upload = UInt64(fields[3])
-    else {
-        return
-    }
-
-    var value = counters[interface, default: Counters()]
-    value.download += download
-    value.upload += upload
-    counters[interface] = value
-}
-
 _ = setpgid(0, 0)
 
 let interval = refreshInterval()
-let nettop = Process()
-let output = Pipe()
-nettop.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
-nettop.arguments = [
-    "-n", "-d", "-L", "0", "-s", String(interval), "-x",
-    "-J", "interface,bytes_in,bytes_out"
-]
-nettop.environment = ProcessInfo.processInfo.environment.merging(["LC_ALL": "C"]) { _, new in new }
-nettop.standardOutput = output
-nettop.standardError = FileHandle.nullDevice
-
-do {
-    try nettop.run()
-} catch {
-    FileHandle.standardError.write(Data("Unable to start nettop: \(error)\n".utf8))
-    exit(EXIT_FAILURE)
-}
-
-var buffer = Data()
-var sample = 0
-var counters: [String: Counters] = [:]
+var previousNetwork = networkCounters()
+var previousNetworkSampleTime = ProcessInfo.processInfo.systemUptime
 var previousDisk = diskCounters()
 var previousDiskSampleTime = ProcessInfo.processInfo.systemUptime
 var previousCPU = cpuCounters()
-let reader = output.fileHandleForReading
 
 while true {
-    let data = reader.readData(ofLength: 16_384)
-    if data.isEmpty { break }
-    buffer.append(data)
-
-    while let newline = buffer.firstIndex(of: 0x0A) {
-        let lineData = buffer[..<newline]
-        buffer.removeSubrange(...newline)
-        if let line = String(data: lineData, encoding: .utf8) {
-            consume(
-                line,
-                sample: &sample,
-                counters: &counters,
-                interval: UInt64(interval),
-                previousDisk: &previousDisk,
-                previousDiskSampleTime: &previousDiskSampleTime,
-                previousCPU: &previousCPU
-            )
-        }
-    }
+    Thread.sleep(forTimeInterval: TimeInterval(interval))
+    emit(
+        previousNetwork: &previousNetwork,
+        previousNetworkSampleTime: &previousNetworkSampleTime,
+        previousDisk: &previousDisk,
+        previousDiskSampleTime: &previousDiskSampleTime,
+        previousCPU: &previousCPU
+    )
 }
-
-nettop.terminate()
-nettop.waitUntilExit()
