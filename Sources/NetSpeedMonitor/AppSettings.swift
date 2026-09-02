@@ -22,6 +22,7 @@ final class AppSettings: ObservableObject {
     private enum Key {
         static let showMenuBar = "showMenuBar"
         static let showFloatingPanel = "showFloatingPanel"
+        static let floatingPanelAlwaysOnTop = "floatingPanelAlwaysOnTop"
         static let showDownload = "showDownload"
         static let showUpload = "showUpload"
         static let showDiskRead = "showDiskRead"
@@ -35,6 +36,7 @@ final class AppSettings: ObservableObject {
     @Published private(set) var launchAtLogin: Bool
     @Published private(set) var showMenuBar: Bool
     @Published private(set) var showFloatingPanel: Bool
+    @Published private(set) var floatingPanelAlwaysOnTop: Bool
     @Published private(set) var showDownload: Bool
     @Published private(set) var showUpload: Bool
     @Published private(set) var showDiskRead: Bool
@@ -52,6 +54,8 @@ final class AppSettings: ObservableObject {
         launchAtLogin = SMAppService.mainApp.status == .enabled
         showMenuBar = defaults.object(forKey: Key.showMenuBar) as? Bool ?? true
         showFloatingPanel = defaults.object(forKey: Key.showFloatingPanel) as? Bool ?? true
+        floatingPanelAlwaysOnTop =
+            defaults.object(forKey: Key.floatingPanelAlwaysOnTop) as? Bool ?? true
         showDownload = defaults.object(forKey: Key.showDownload) as? Bool ?? true
         showUpload = defaults.object(forKey: Key.showUpload) as? Bool ?? true
         showDiskRead = defaults.object(forKey: Key.showDiskRead) as? Bool ?? true
@@ -103,6 +107,12 @@ final class AppSettings: ObservableObject {
         }
         showFloatingPanel = enabled
         savePresentation()
+    }
+
+    func setFloatingPanelAlwaysOnTop(_ enabled: Bool) {
+        floatingPanelAlwaysOnTop = enabled
+        UserDefaults.standard.set(enabled, forKey: Key.floatingPanelAlwaysOnTop)
+        onPresentationChanged?()
     }
 
     func setShowDownload(_ enabled: Bool) {

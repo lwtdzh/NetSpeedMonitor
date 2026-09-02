@@ -11,7 +11,7 @@ the menu bar and an optional always-on-top floating panel.
 - Bits/s and Bytes/s display modes
 - Configurable refresh intervals: 1, 2, 3, 5, or 10 seconds
 - Launch at login
-- Persistent panel position, size, and display preferences
+- Persistent panel position and size for each connected-display combination
 - Native support for Apple silicon and Intel Macs
 - Self-contained traffic helper with no separate installation
 

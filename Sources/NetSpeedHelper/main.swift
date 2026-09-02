@@ -17,9 +17,15 @@ struct CPUCounters {
     var total: UInt64 = 0
 }
 
-func networkCounters() -> [String: Counters] {
+func networkCounters() -> [String: Counters]? {
     let process = Process()
     let output = Pipe()
+    let readHandle = output.fileHandleForReading
+    let writeHandle = output.fileHandleForWriting
+    defer {
+        try? readHandle.close()
+        try? writeHandle.close()
+    }
     process.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
     process.arguments = [
         "-P", "-t", "external", "-L", "1", "-n", "-x",
@@ -34,16 +40,17 @@ func networkCounters() -> [String: Counters] {
     do {
         try process.run()
     } catch {
-        return [:]
+        return nil
     }
 
-    let data = output.fileHandleForReading.readDataToEndOfFile()
+    try? writeHandle.close()
+    let data = readHandle.readDataToEndOfFile()
     process.waitUntilExit()
     guard
         process.terminationStatus == EXIT_SUCCESS,
         let text = String(data: data, encoding: .utf8)
     else {
-        return [:]
+        return nil
     }
 
     var counters: [String: Counters] = [:]
@@ -59,7 +66,7 @@ func networkCounters() -> [String: Counters] {
         }
         counters[String(fields[0])] = Counters(download: download, upload: upload)
     }
-    return counters
+    return counters.isEmpty ? nil : counters
 }
 
 func cpuCounters() -> CPUCounters {
@@ -169,26 +176,28 @@ func emit(
     previousDiskSampleTime: inout TimeInterval,
     previousCPU: inout CPUCounters
 ) {
-    let currentNetwork = networkCounters()
+    let sampledNetwork = networkCounters()
     let currentNetworkSampleTime = ProcessInfo.processInfo.systemUptime
     let networkSampleInterval = max(currentNetworkSampleTime - previousNetworkSampleTime, 0.001)
     var externalDownload: UInt64 = 0
     var externalUpload: UInt64 = 0
     var interfaces: [String: [String: UInt64]] = [:]
 
-    for (process, current) in currentNetwork {
-        guard let previous = previousNetwork[process] else { continue }
-        let download = current.download >= previous.download
-            ? current.download - previous.download
-            : 0
-        let upload = current.upload >= previous.upload
-            ? current.upload - previous.upload
-            : 0
-        externalDownload += download
-        externalUpload += upload
+    if let currentNetwork = sampledNetwork {
+        for (process, current) in currentNetwork {
+            guard let previous = previousNetwork[process] else { continue }
+            let download = current.download >= previous.download
+                ? current.download - previous.download
+                : 0
+            let upload = current.upload >= previous.upload
+                ? current.upload - previous.upload
+                : 0
+            externalDownload += download
+            externalUpload += upload
+        }
+        previousNetwork = currentNetwork
+        previousNetworkSampleTime = currentNetworkSampleTime
     }
-    previousNetwork = currentNetwork
-    previousNetworkSampleTime = currentNetworkSampleTime
     interfaces["external"] = [
         "downloadBytesPerSecond": UInt64(Double(externalDownload) / networkSampleInterval),
         "uploadBytesPerSecond": UInt64(Double(externalUpload) / networkSampleInterval)
@@ -242,7 +251,7 @@ func emit(
 _ = setpgid(0, 0)
 
 let interval = refreshInterval()
-var previousNetwork = networkCounters()
+var previousNetwork = networkCounters() ?? [:]
 var previousNetworkSampleTime = ProcessInfo.processInfo.systemUptime
 var previousDisk = diskCounters()
 var previousDiskSampleTime = ProcessInfo.processInfo.systemUptime

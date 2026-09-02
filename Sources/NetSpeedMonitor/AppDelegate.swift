@@ -53,10 +53,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        floatingPanel?.savePlacement()
         monitor.stop()
     }
 
     private func applyPresentationSettings() {
+        floatingPanel?.setAlwaysOnTop(settings.floatingPanelAlwaysOnTop)
         floatingPanel?.setVisible(settings.showFloatingPanel)
 
         if settings.showMenuBar {

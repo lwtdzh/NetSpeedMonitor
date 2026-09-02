@@ -2,8 +2,9 @@ import AppKit
 import SwiftUI
 
 private final class EdgeConstrainedPanel: NSPanel {
-    static let minimumSize = NSSize(width: 82, height: 52)
-    static let maximumSize = NSSize(width: 720, height: 480)
+    static let aspectRatio: CGFloat = 4.5
+    static let minimumSize = NSSize(width: 234, height: 52)
+    static let maximumSize = NSSize(width: 720, height: 160)
     private static let resizeHitThickness: CGFloat = 10
 
     private struct ResizeEdges: OptionSet {
@@ -88,55 +89,73 @@ private final class EdgeConstrainedPanel: NSPanel {
             let mouse = NSEvent.mouseLocation
             let deltaX = mouse.x - initialMouse.x
             let deltaY = mouse.y - initialMouse.y
-            var resizedFrame = initialFrame
-
-            if edges.contains(.left) {
-                resizedFrame.origin.x += deltaX
-                resizedFrame.size.width -= deltaX
+            let horizontalScale = (
+                initialFrame.width
+                    + (edges.contains(.left) ? -deltaX : deltaX)
+            ) / initialFrame.width
+            let verticalScale = (
+                initialFrame.height
+                    + (edges.contains(.bottom) ? -deltaY : deltaY)
+            ) / initialFrame.height
+            let hasHorizontalEdge = edges.contains(.left) || edges.contains(.right)
+            let hasVerticalEdge = edges.contains(.top) || edges.contains(.bottom)
+            let requestedScale: CGFloat
+            if hasHorizontalEdge && hasVerticalEdge {
+                requestedScale = abs(horizontalScale - 1) >= abs(verticalScale - 1)
+                    ? horizontalScale
+                    : verticalScale
+            } else {
+                requestedScale = hasHorizontalEdge ? horizontalScale : verticalScale
             }
-            if edges.contains(.right) {
-                resizedFrame.size.width += deltaX
+            let minimumScale = max(
+                Self.minimumSize.width / initialFrame.width,
+                Self.minimumSize.height / initialFrame.height
+            )
+            let maximumScale = min(
+                Self.maximumSize.width / initialFrame.width,
+                Self.maximumSize.height / initialFrame.height
+            )
+            let scale = min(max(requestedScale, minimumScale), maximumScale)
+            let resizedSize = NSSize(
+                width: initialFrame.width * scale,
+                height: initialFrame.height * scale
+            )
+            var resizedFrame = NSRect(origin: initialFrame.origin, size: resizedSize)
+            if edges.contains(.left) {
+                resizedFrame.origin.x = initialFrame.maxX - resizedSize.width
+            } else if !edges.contains(.right) {
+                resizedFrame.origin.x = initialFrame.midX - resizedSize.width / 2
             }
             if edges.contains(.bottom) {
-                resizedFrame.origin.y += deltaY
-                resizedFrame.size.height -= deltaY
-            }
-            if edges.contains(.top) {
-                resizedFrame.size.height += deltaY
-            }
-
-            if resizedFrame.width < Self.minimumSize.width, edges.contains(.left) {
-                resizedFrame.origin.x = initialFrame.maxX - Self.minimumSize.width
-            }
-            if resizedFrame.height < Self.minimumSize.height, edges.contains(.bottom) {
-                resizedFrame.origin.y = initialFrame.maxY - Self.minimumSize.height
+                resizedFrame.origin.y = initialFrame.maxY - resizedSize.height
+            } else if !edges.contains(.top) {
+                resizedFrame.origin.y = initialFrame.midY - resizedSize.height / 2
             }
 
             setFrame(resizedFrame, display: true)
         }
 
-        saveFrame(usingName: "NetSpeedMonitorFloatingPanel")
     }
 
     private func constrainedFrame(_ proposedFrame: NSRect) -> NSRect {
         var frame = proposedFrame
-        frame.size.width = min(
-            max(frame.width, Self.minimumSize.width),
-            Self.maximumSize.width
-        )
         frame.size.height = min(
             max(frame.height, Self.minimumSize.height),
             Self.maximumSize.height
         )
+        frame.size.width = frame.height * Self.aspectRatio
 
-        let targetScreen = screen ?? NSScreen.screens.max {
+        let targetScreen = NSScreen.screens.max {
             intersectionArea(frame, $0.visibleFrame) <
                 intersectionArea(frame, $1.visibleFrame)
-        }
+        } ?? screen
         guard let visibleFrame = targetScreen?.visibleFrame else { return frame }
 
-        frame.size.width = min(frame.width, visibleFrame.width)
-        frame.size.height = min(frame.height, visibleFrame.height)
+        let maximumHeight = min(visibleFrame.height, visibleFrame.width / Self.aspectRatio)
+        if frame.height > maximumHeight {
+            frame.size.height = maximumHeight
+            frame.size.width = maximumHeight * Self.aspectRatio
+        }
         frame.origin.x = min(
             max(frame.minX, visibleFrame.minX),
             visibleFrame.maxX - frame.width
@@ -155,14 +174,26 @@ private final class EdgeConstrainedPanel: NSPanel {
 }
 
 final class FloatingPanelController: NSWindowController, NSWindowDelegate {
+    private struct SavedPanelPlacement: Codable {
+        let displayID: String
+        let relativeX: Double
+        let relativeY: Double
+        let width: Double
+        let height: Double
+    }
+
+    private static let placementsKey = "floatingPanelPlacementsByDisplayConfiguration"
     private var isConstrainingFrame = false
+    private var isRestoringPlacement = false
+    private var saveWorkItem: DispatchWorkItem?
+    private var screenChangeWorkItem: DispatchWorkItem?
 
     init(
         monitor: TrafficMonitor,
         settings: AppSettings,
         openSettings: @escaping () -> Void
     ) {
-        let size = NSSize(width: 118, height: 70)
+        let size = NSSize(width: 315, height: 70)
         let panel = EdgeConstrainedPanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel, .resizable],
@@ -177,7 +208,7 @@ final class FloatingPanelController: NSWindowController, NSWindowDelegate {
                 openSettings: openSettings
             )
         )
-        panel.level = .floating
+        panel.level = settings.floatingPanelAlwaysOnTop ? .floating : .normal
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.backgroundColor = .clear
         panel.isOpaque = false
@@ -188,15 +219,26 @@ final class FloatingPanelController: NSWindowController, NSWindowDelegate {
         panel.isReleasedWhenClosed = false
         panel.minSize = EdgeConstrainedPanel.minimumSize
         panel.maxSize = EdgeConstrainedPanel.maximumSize
+        panel.contentAspectRatio = NSSize(
+            width: EdgeConstrainedPanel.aspectRatio,
+            height: 1
+        )
 
         super.init(window: panel)
         panel.delegate = self
 
-        if !panel.setFrameUsingName("NetSpeedMonitorFloatingPanel") {
-            positionAtTopRight()
+        if !restorePlacementForCurrentConfiguration() {
+            isRestoringPlacement = true
+            let restoredLegacyFrame = panel.setFrameUsingName("NetSpeedMonitorFloatingPanel")
+            isRestoringPlacement = false
+            if !restoredLegacyFrame {
+                positionAtTopRight()
+            }
+            constrainToVisibleScreen()
+            savePlacementNow()
+        } else {
+            constrainToVisibleScreen()
         }
-        panel.setFrameAutosaveName("NetSpeedMonitorFloatingPanel")
-        constrainToVisibleScreen()
 
         NotificationCenter.default.addObserver(
             self,
@@ -212,6 +254,8 @@ final class FloatingPanelController: NSWindowController, NSWindowDelegate {
     }
 
     deinit {
+        saveWorkItem?.cancel()
+        screenChangeWorkItem?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -224,16 +268,153 @@ final class FloatingPanelController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    func setAlwaysOnTop(_ enabled: Bool) {
+        window?.level = enabled ? .floating : .normal
+    }
+
+    func savePlacement() {
+        saveWorkItem?.cancel()
+        savePlacementNow()
+    }
+
     func windowDidMove(_ notification: Notification) {
         constrainToVisibleScreen()
+        schedulePlacementSaveForUserInteraction()
     }
 
     func windowDidResize(_ notification: Notification) {
         constrainToVisibleScreen()
+        schedulePlacementSaveForUserInteraction()
     }
 
     @objc private func screenParametersChanged() {
-        constrainToVisibleScreen()
+        saveWorkItem?.cancel()
+        screenChangeWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if !self.restorePlacementForCurrentConfiguration() {
+                self.constrainToVisibleScreen()
+                self.savePlacementNow()
+            }
+        }
+        screenChangeWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: workItem)
+    }
+
+    private func schedulePlacementSaveForUserInteraction() {
+        guard !isRestoringPlacement, NSEvent.pressedMouseButtons != 0 else { return }
+        saveWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.savePlacementNow()
+        }
+        saveWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+    }
+
+    @discardableResult
+    private func restorePlacementForCurrentConfiguration() -> Bool {
+        guard
+            let panel = window,
+            let configurationKey = currentDisplayConfigurationKey(),
+            let placement = savedPlacements()[configurationKey],
+            let targetScreen = NSScreen.screens.first(
+                where: { displayIdentifier(for: $0) == placement.displayID }
+            )
+        else {
+            return false
+        }
+
+        let visibleFrame = targetScreen.visibleFrame
+        let size = NSSize(
+            width: CGFloat(placement.width),
+            height: CGFloat(placement.height)
+        )
+        let availableWidth = max(0, visibleFrame.width - size.width)
+        let availableHeight = max(0, visibleFrame.height - size.height)
+        let origin = NSPoint(
+            x: visibleFrame.minX
+                + availableWidth * CGFloat(min(max(placement.relativeX, 0), 1)),
+            y: visibleFrame.minY
+                + availableHeight * CGFloat(min(max(placement.relativeY, 0), 1))
+        )
+
+        isRestoringPlacement = true
+        panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        isRestoringPlacement = false
+        return true
+    }
+
+    private func savePlacementNow() {
+        guard
+            let panel = window,
+            let configurationKey = currentDisplayConfigurationKey(),
+            let targetScreen = panel.screen ?? NSScreen.screens.max(by: {
+                intersectionArea(panel.frame, $0.visibleFrame)
+                    < intersectionArea(panel.frame, $1.visibleFrame)
+            })
+        else {
+            return
+        }
+
+        let visibleFrame = targetScreen.visibleFrame
+        let availableWidth = max(0, visibleFrame.width - panel.frame.width)
+        let availableHeight = max(0, visibleFrame.height - panel.frame.height)
+        let relativeX = availableWidth > 0
+            ? (panel.frame.minX - visibleFrame.minX) / availableWidth
+            : 0
+        let relativeY = availableHeight > 0
+            ? (panel.frame.minY - visibleFrame.minY) / availableHeight
+            : 0
+        let placement = SavedPanelPlacement(
+            displayID: displayIdentifier(for: targetScreen),
+            relativeX: Double(min(max(relativeX, 0), 1)),
+            relativeY: Double(min(max(relativeY, 0), 1)),
+            width: Double(panel.frame.width),
+            height: Double(panel.frame.height)
+        )
+
+        var placements = savedPlacements()
+        placements[configurationKey] = placement
+        guard let data = try? JSONEncoder().encode(placements) else { return }
+        UserDefaults.standard.set(data, forKey: Self.placementsKey)
+    }
+
+    private func savedPlacements() -> [String: SavedPanelPlacement] {
+        guard
+            let data = UserDefaults.standard.data(forKey: Self.placementsKey),
+            let placements = try? JSONDecoder().decode(
+                [String: SavedPanelPlacement].self,
+                from: data
+            )
+        else {
+            return [:]
+        }
+        return placements
+    }
+
+    private func currentDisplayConfigurationKey() -> String? {
+        let identifiers = NSScreen.screens.map(displayIdentifier).sorted()
+        guard !identifiers.isEmpty else { return nil }
+        return identifiers.joined(separator: "|")
+    }
+
+    private func displayIdentifier(for screen: NSScreen) -> String {
+        guard
+            let number = screen.deviceDescription[
+                NSDeviceDescriptionKey("NSScreenNumber")
+            ] as? NSNumber
+        else {
+            return "screen-\(screen.localizedName)-\(Int(screen.frame.width))x\(Int(screen.frame.height))"
+        }
+
+        let displayID = CGDirectDisplayID(number.uint32Value)
+        guard
+            let uuid = CGDisplayCreateUUIDFromDisplayID(displayID)?.takeRetainedValue(),
+            let value = CFUUIDCreateString(nil, uuid)
+        else {
+            return "display-\(displayID)"
+        }
+        return value as String
     }
 
     private func positionAtTopRight() {
